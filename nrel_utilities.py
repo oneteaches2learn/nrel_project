@@ -14,6 +14,7 @@ def nrel_utilities_helloWorld():
     print('Hello World!')
     return
 
+# Hi I'm a comment!
 
 def paper_figures(path):
     substance = 'CO$_2$ '
