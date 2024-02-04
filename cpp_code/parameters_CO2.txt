@@ -1,0 +1,13 @@
+chemical_species			CO2
+temperature_step_size      	4
+temperature_step_number    	0
+temperature_start          	305
+temperature_end				2000
+pressure_step_size         	4
+pressure_step_number       	0
+pressure_start 				73
+pressure_end				400
+pressure_unit			atm
+density_unit			kg/m3
+viscosity_unit			uPa_s
+conductivity_unit       W/cm/K                
