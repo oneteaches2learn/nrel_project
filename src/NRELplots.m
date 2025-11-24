@@ -1,16 +1,52 @@
 classdef NRELplots
+% NRELplots Class for generating property comparison plots for NREL paper
+%
+%   Usage:
+%       np = NRELplots()
+%       np = NRELplots('save',0,'high_fidelity',0,'zoom',0,'titles_on',1);
+%
+%   Inputs:
+%       save            - (0/1) whether to save images (default: 0)
+%       high_fidelity   - (0/1) whether to use high-fidelity data (default: 0)
+%       zoom            - (0/1) whether to use zoomed in data (default: 0)
+%       titles_on       - (0/1) whether to display titles on plots (default: 1)
+%
+%  Methods:
+%       print_params()                   - prints parameter files for Pele runs
+%       collect_data()                   - runs Pele simulations to collect data
+%       plot_density()                   - plots density comparisons
+%       plot_density_error()             - plots density error comparisons
+%       plot_viscosity()                 - plots viscosity comparisons
+%       plot_viscosity_error()           - plots viscosity error comparisons
+%       plot_dmudrho()                   - plots dmu/drho comparisons
+%       plot_conductivity()              - plots conductivity comparisons
+%       plot_conductivity_error()        - plots conductivity error comparisons
+%       plot_specificHeat()              - plots specific heat comparisons
+%       plot_specificHeat_error()        - plots specific heat error comparisons
+%       plot_dlamdrho()                  - plots dlam/drho comparisons
+%       plot_density_floor()             - plots density floor comparisons
+%       plot_kinematic_viscosity_ratio() - plots kinematic viscosity ratio
+%
+%  Author: Tyler Fara                  Date: November 23, 2025
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
     properties
-        opts
-        data
-        key
-        F_name
-        F_filename
-        F_unit
-        F_contourLines
-        C_scheme
-        C_label
-        C_manual_levels
+        opts                % options       
+        data                % data storage
+        F                   % computed fields
+    end
+
+    properties (Dependent)
+        key                 % key for accessing fields in F
+        F_name              % names for F
+        F_filename          % filenames for F
+        F_unit              % units for F
+        F_contourLines      % contour lines for F
+        C_min               % color limits
+        C_max               % color limits
+        C_scheme            % color scheme
+        C_label             % colorbar label
+        C_manual_levels     % manual contour levels
     end
 
     methods
@@ -18,13 +54,16 @@ classdef NRELplots
 
             arguments
                 args.save = 0;
-                args.highFidelity = 0;
+                args.high_fidelity = 0;
                 args.zoom = 0;
+                args.titles_on = 1;
             end
 
             % SET OPTIONS 
             self.opts.save_images = args.save;
-            self.opts.high_fidelity = args.highFidelity;
+            self.opts.high_fidelity = args.high_fidelity;
+            self.opts.titles_on = args.titles_on;
+            self.opts.zoom = args.zoom;
 
             % if zoomed in dat requestd
             if args.zoom
@@ -61,7 +100,7 @@ classdef NRELplots
 
             % LOAD DATA
             self = self.read_data();
-            self = self.compute_data();
+            self = self.compute_F();
 
         end
 
@@ -250,311 +289,227 @@ classdef NRELplots
 
         end
 
-        function self = compute_data(self)
 
+        function C_min = get.C_min(self)
+            [C_min,~] = self.compute_color_limits();
+        end
+
+        function C_max = get.C_max(self)
+            [~,C_max] = self.compute_color_limits();
+        end
+
+        function [C_min,C_max] = compute_color_limits(self)
+
+            % store variables
             key = self.key();
-            self.data.F = self.compute_properties(self.data.D_pele,self.data.D_cool,self.data.D_test);
+            F = self.F;
+            nSpecies = 3;
+            nFields  = numel(F{1});
 
-            % compute max/min of computed data
-            for i = 1:3, for j = 1:length(self.data.F{1})
+            % INITIAL PASS: compute min/max over all computed fields
+            C_max = cell(nSpecies, 1);
+            C_min = cell(nSpecies, 1);
 
-                C_max{i}{j} = max(max(self.data.F{i}{j}));
-                C_min{i}{j} = min(min(self.data.F{i}{j}));
-
-            end, end
-
-
-            % STANDARDIZE COLOR LIMITS FOR DENSITY
-            for i = 1:3
-
-                temp_max = max(C_max{i}{key.dens_gen},C_max{i}{key.dens_ref});
-                temp_min = min(C_min{i}{key.dens_gen},C_min{i}{key.dens_ref});
-
-                C_max{i}{key.dens_gen} = temp_max;
-                C_min{i}{key.dens_gen} = temp_min;
-                C_max{i}{key.dens_ref} = temp_max;
-                C_min{i}{key.dens_ref} = temp_min;
-
-            end
-
-
-            % STANDARDIZE COLOR LIMITS FOR VISCOSITY
-            for i = 1:3
-
-                temp_max = max([C_max{i}{key.visc_gen},C_max{i}{key.visc_ref},C_max{i}{key.visc_hyb}]);
-                temp_min = min([C_min{i}{key.visc_gen},C_min{i}{key.visc_ref},C_min{i}{key.visc_hyb}]);
-
-                C_max{i}{key.visc_gen} = temp_max;
-                C_min{i}{key.visc_gen} = temp_min;
-                C_max{i}{key.visc_ref} = temp_max;
-                C_min{i}{key.visc_ref} = temp_min;
-                C_max{i}{key.visc_hyb} = temp_max;
-                C_min{i}{key.visc_hyb} = temp_min;
-
-            end
-
-
-            % STANDARDIZE COLOR LIMITS FOR DENSITY ABSOLUTE ERROR
-            for i = 1:3
-
-                temp_max = max(C_max{i}{key.dens_ERR});
-                temp_min = min(C_min{i}{key.dens_ERR});
-
-                if abs(temp_min) > abs(temp_max)
-                    temp_max = abs(temp_min);
-                else
-                    temp_min = -abs(temp_max);
+            for i = 1:nSpecies
+                C_max{i} = cell(1, nFields);
+                C_min{i} = cell(1, nFields);
+                for j = 1:nFields
+                    Fij = F{i}{j};
+                    C_max{i}{j} = max(Fij(:));
+                    C_min{i}{j} = min(Fij(:));
                 end
-
-                C_max{i}{key.dens_ERR} = temp_max;
-                C_min{i}{key.dens_ERR} = temp_min;
-
             end
 
+            % STANDARDIZE COLOR LIMITS FOR DENSITY (gen vs ref)
+            densPair = [key.dens_gen, key.dens_ref];
 
-            % STANDARDIZE COLOR LIMITS FOR DENSITY RELATIVE ERROR
-            for i = 1:3
-                temp_max = max(C_max{i}{key.dens_err});
-                temp_min = min(C_min{i}{key.dens_err});
+            for i = 1:nSpecies
+                valsMax = [C_max{i}{densPair}];
+                valsMin = [C_min{i}{densPair}];
 
-                if abs(temp_min) > abs(temp_max)
-                    temp_max = abs(temp_min);
-                else
-                    temp_min = -abs(temp_max);
-                end
+                temp_max = max(valsMax);
+                temp_min = min(valsMin);
 
-                C_max{i}{key.dens_err} = temp_max;
-                C_min{i}{key.dens_err} = temp_min;
-
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    densPair, temp_min, temp_max);
             end
 
-            % override limits so that every species has the same
-            C_min{1}{key.dens_err} = temp_min;
-            C_max{1}{key.dens_err} = temp_max;
-            C_min{2}{key.dens_err} = temp_min;
-            C_max{2}{key.dens_err} = temp_max;
-            C_min{3}{key.dens_err} = temp_min;
-            C_max{3}{key.dens_err} = temp_max;
+            % STANDARDIZE COLOR LIMITS FOR VISCOSITY (gen, ref, hyb)
+            viscGroup = [key.visc_gen, key.visc_ref, key.visc_hyb];
 
+            for i = 1:nSpecies
+                valsMax = [C_max{i}{viscGroup}];
+                valsMin = [C_min{i}{viscGroup}];
 
-            % STANDARDIZE COLOR LIMITS FOR VISCOSITY ABSOLUTE ERROR
-            for i = 1:3
+                temp_max = max(valsMax);
+                temp_min = min(valsMin);
 
-                temp_max = max([C_max{i}{key.visc_ERR_tot},C_max{i}{key.visc_ERR_corr},C_max{i}{key.visc_ERR_eos},C_max{i}{key.visc_ERR_assembled}, C_max{i}{key.visc_ERR_secondorder}]);
-                temp_min = min([C_min{i}{key.visc_ERR_tot},C_min{i}{key.visc_ERR_corr},C_min{i}{key.visc_ERR_eos},C_min{i}{key.visc_ERR_assembled}, C_min{i}{key.visc_ERR_secondorder}]);
-
-                if abs(temp_min) > abs(temp_max)
-                    temp_max = abs(temp_min);
-                else
-                    temp_min = -abs(temp_max);
-                end
-
-                %temp_min = -15;
-                %temp_max = 15;
-
-                C_max{i}{key.visc_ERR_tot} = temp_max;
-                C_min{i}{key.visc_ERR_tot} = temp_min;
-                C_max{i}{key.visc_ERR_corr} = temp_max;
-                C_min{i}{key.visc_ERR_corr} = temp_min;
-                C_max{i}{key.visc_ERR_eos} = temp_max;
-                C_min{i}{key.visc_ERR_eos} = temp_min;
-                C_max{i}{key.visc_ERR_assembled} = temp_max;
-                C_min{i}{key.visc_ERR_assembled} = temp_min;
-                C_max{i}{key.visc_ERR_secondorder} = temp_max;
-                C_min{i}{key.visc_ERR_secondorder} = temp_min;
-
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    viscGroup, temp_min, temp_max);
             end
 
+            % DENSITY ABSOLUTE ERROR (symmetric about 0)
+            for i = 1:nSpecies
+                temp_max = C_max{i}{key.dens_ERR};
+                temp_min = C_min{i}{key.dens_ERR};
+                [temp_min, temp_max] = self.makeSymmetric(temp_min, temp_max);
 
-            % STANDARDIZE COLOR LIMITS FOR VISCOSITY RELATIVE ERROR
-            temp_Max = -inf;
-            temp_Min = inf;
-            for i = 1:3
-
-                temp_max = max([C_max{i}{key.visc_err_tot},C_max{i}{key.visc_err_corr},C_max{i}{key.visc_err_eos},C_max{i}{key.visc_err_assembled}, C_max{i}{key.visc_err_secondorder}]);
-                temp_min = min([C_min{i}{key.visc_err_tot},C_min{i}{key.visc_err_corr},C_min{i}{key.visc_err_eos},C_min{i}{key.visc_err_assembled}, C_min{i}{key.visc_err_secondorder}]);
-
-                % this standardizes across all species
-                if temp_max > temp_Max, temp_Max = temp_max; end
-                if temp_min < temp_Min, temp_Min = temp_min; end
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    key.dens_ERR, temp_min, temp_max);
             end
 
-            if abs(temp_Min) > abs(temp_Max)
-                temp_Max = abs(temp_Min);
-            else
-                temp_Min = -abs(temp_Max);
+            % DENSITY RELATIVE ERROR (symmetric about 0, then unified across species)
+            % first: per-species symmetric limits
+            for i = 1:nSpecies
+                temp_max = C_max{i}{key.dens_err};
+                temp_min = C_min{i}{key.dens_err};
+                [temp_min, temp_max] = self.makeSymmetric(temp_min, temp_max);
+
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    key.dens_err, temp_min, temp_max);
             end
 
-            temp_Max = 0.2;
+            % then: override so every species has same limits (use last computed)
+            temp_min = C_min{nSpecies}{key.dens_err};
+            temp_max = C_max{nSpecies}{key.dens_err};
+            for i = 1:nSpecies
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    key.dens_err, temp_min, temp_max);
+            end
+
+            % VISCOSITY ABSOLUTE ERROR (group of 5, symmetric)
+            viscErrAbs = [ ...
+                key.visc_ERR_tot, ...
+                key.visc_ERR_corr, ...
+                key.visc_ERR_eos, ...
+                key.visc_ERR_assembled, ...
+                key.visc_ERR_secondorder];
+
+            for i = 1:nSpecies
+                valsMax = [C_max{i}{viscErrAbs}];
+                valsMin = [C_min{i}{viscErrAbs}];
+                temp_max = max(valsMax);
+                temp_min = min(valsMin);
+                [temp_min, temp_max] = self.makeSymmetric(temp_min, temp_max);
+
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    viscErrAbs, temp_min, temp_max);
+            end
+
+            % VISCOSITY RELATIVE ERROR (you manually clamp to [-0.2, 0.2])
+            viscErrRel = [ ...
+                key.visc_err_tot, ...
+                key.visc_err_corr, ...
+                key.visc_err_eos, ...
+                key.visc_err_assembled, ...
+                key.visc_err_secondorder];
+
             temp_Min = -0.2;
+            temp_Max =  0.2;
 
-            for i = 1:3
-                C_max{i}{key.visc_err_tot} = temp_Max;
-                C_min{i}{key.visc_err_tot} = temp_Min;
-                C_max{i}{key.visc_err_corr} = temp_Max;
-                C_min{i}{key.visc_err_corr} = temp_Min;
-                C_max{i}{key.visc_err_eos} = temp_Max;
-                C_min{i}{key.visc_err_eos} = temp_Min;
-                C_max{i}{key.visc_err_assembled} = temp_Max;
-                C_min{i}{key.visc_err_assembled} = temp_Min;
-                C_max{i}{key.visc_err_secondorder} = temp_Max;
-                C_min{i}{key.visc_err_secondorder} = temp_Min;
+            for i = 1:nSpecies
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    viscErrRel, temp_Min, temp_Max);
             end
 
-
-            % STANDARDIZE COLOR LIMITS FOR KINETAMATIC VISCOSITY RATIO
-            for i = 1:3
+            % KINEMATIC VISCOSITY RATIO
+            % (note: preserves your original formula, just formatted)
+            for i = 1:nSpecies
                 maxVal = abs(1 - max(self.max([key.visc_kinematic_ratio])));
                 minVal = abs(1 - min(self.min([key.visc_kinematic_ratio])));
-                val = max(maxVal,minVal);
+                val    = max(maxVal, minVal);
 
                 C_max{i}{key.visc_kinematic_ratio} = 1 + val;
                 C_min{i}{key.visc_kinematic_ratio} = 1 - val;
             end
 
+            % CONDUCTIVITY (gen, ref, hyb) – with your manual overrides
+            condGroup = [key.cond_gen, key.cond_ref, key.cond_hyb];
 
-            % STANDARDIZE COLOR LIMITS FOR CONDUCTIVITY
-            for i = 1:3
-                % note: including "ref" blows up data at (Tc,Pc), so we exclude it
-                %temp_max = max([C_max{i}{key.cond_gen},C_max{i}{key.cond_ref},C_max{i}{key.cond_hyb}]);
-                %temp_min = min([C_min{i}{key.cond_gen},C_min{i}{key.cond_ref},C_min{i}{key.cond_hyb}]);
-                temp_max = max([C_max{i}{key.cond_gen}]);
-                temp_min = min([C_min{i}{key.cond_gen}]);
-
-                temp_max = temp_max
+            for i = 1:nSpecies
+                % original auto-scaling (kept but simplified, though overridden below)
+                temp_max = C_max{i}{key.cond_gen};
+                temp_min = C_min{i}{key.cond_gen};
                 temp_min = temp_min - 0.05 * temp_min;
 
+                % manual species-specific limits (unchanged)
                 if i == 1
                     temp_max = 0.099;
                     temp_min = 0.025;
                 elseif i == 2
-                    temp_max = .11;
+                    temp_max = 0.11;
                     temp_min = 0.03;
                 elseif i == 3
-                    temp_max = .07;
+                    temp_max = 0.07;
                     temp_min = 0.01;
                 end
-                %}
 
-
-                C_max{i}{key.cond_gen} = temp_max;
-                C_min{i}{key.cond_gen} = temp_min;
-                C_max{i}{key.cond_ref} = temp_max;
-                C_min{i}{key.cond_ref} = temp_min;
-                C_max{i}{key.cond_hyb} = temp_max;
-                C_min{i}{key.cond_hyb} = temp_min;
-
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    condGroup, temp_min, temp_max);
             end
 
+            % CONDUCTIVITY ABSOLUTE ERROR (manual species-specific limits)
+            condErrAbs = [ ...
+                key.cond_ERR_tot, ...
+                key.cond_ERR_corr, ...
+                key.cond_ERR_eos, ...
+                key.cond_ERR_assembled, ...
+                key.cond_ERR_secondorder];
 
-            % STANDARDIZE COLOR LIMITS FOR CONDUCTIVITY ABSOLUTE ERROR
-            for i = 1:3
-
-                % NOTE: for conductivity, this method doesn't work because of singularity at (Tc,Pc)
-                %{
-                temp_max = max([C_max{i}{key.cond_ERR_tot},C_max{i}{key.cond_ERR_corr},C_max{i}{key.cond_ERR_eos},C_max{i}{key.cond_ERR_assembled}, C_max{i}{key.cond_ERR_secondorder}]);
-                temp_min = min([C_min{i}{key.cond_ERR_tot},C_min{i}{key.cond_ERR_corr},C_min{i}{key.cond_ERR_eos},C_min{i}{key.cond_ERR_assembled}, C_min{i}{key.cond_ERR_secondorder}]);
-
-                if abs(temp_min) > abs(temp_max)
-                    temp_max = abs(temp_min);
-                else
-                    temp_min = -abs(temp_max);
-                end
-                %}
-
-                % instead we exclude the largest errors
-                %   NOTE: These have been manually calibrated for each species
-                err = self.data.D_pele{i}{key.lam}-self.data.D_cool{i}{key.lam};
-                err = sort(abs(err(:)),'descend');
+            for i = 1:nSpecies
+                % NOTE: you had some commented logic using sorted errors; I leave
+                % that out and keep the hand-tuned species limits.
 
                 if i == 1
-                    temp_max = 20;
-                    temp_min = -20;
+                    temp_max = 20;   temp_min = -20;
                 elseif i == 2
-                    temp_max = 50;
-                    temp_min = -50;
-                elseif i == 3
-                    temp_max = 8;
-                    temp_min = -8;
+                    temp_max = 50;   temp_min = -50;
+                else % i == 3
+                    temp_max = 8;    temp_min = -8;
                 end
 
-                % convert to mW/m_K
-                %temp_max = 1000 * temp_max;
-                %temp_min = 1000 * temp_min;
-
-                % conductivity total error
-                C_max{i}{key.cond_ERR_tot} = temp_max;
-                C_min{i}{key.cond_ERR_tot} = temp_min;
-
-                % conductivity correlation error
-                C_max{i}{key.cond_ERR_corr} = temp_max;
-                C_min{i}{key.cond_ERR_corr} = temp_min;
-                C_max{i}{key.cond_ERR_eos} = temp_max;
-                C_min{i}{key.cond_ERR_eos} = temp_min;
-                C_max{i}{key.cond_ERR_assembled} = temp_max;
-                C_min{i}{key.cond_ERR_assembled} = temp_min;
-                C_max{i}{key.cond_ERR_secondorder} = temp_max;
-                C_min{i}{key.cond_ERR_secondorder} = temp_min;
-
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    condErrAbs, temp_min, temp_max);
             end
 
+            % CONDUCTIVITY RELATIVE ERROR (global, then CO2 override)
+            condErrRel = [ ...
+                key.cond_err_tot, ...
+                key.cond_err_corr, ...
+                key.cond_err_eos, ...
+                key.cond_err_assembled, ...
+                key.cond_err_secondorder];
 
-            % STANDARDIZE COLOR LIMITS FOR CONDUCTIVITY RELATIVE ERROR
-            for i = 1:3
-                temp_Max = max([C_max{i}{key.cond_err_tot},C_max{i}{key.cond_err_corr},C_max{i}{key.cond_err_eos},C_max{i}{key.cond_err_assembled}, C_max{i}{key.cond_err_secondorder}]);
-                temp_Min = min([C_min{i}{key.cond_err_tot},C_min{i}{key.cond_err_corr},C_min{i}{key.cond_err_eos},C_min{i}{key.cond_err_assembled}, C_min{i}{key.cond_err_secondorder}]);
-            end
-            if abs(temp_Min) > abs(temp_Max)
-                temp_Max = abs(temp_Min);
-            else
-                temp_Min = -abs(temp_Max);
-            end
-
-            % manually set limits
-            temp_Max = 0.25;
+            % global manual clamp
             temp_Min = -0.25;
-            for i = 1:3
-                C_max{i}{key.cond_err_tot} = temp_Max;
-                C_min{i}{key.cond_err_tot} = temp_Min;
-                C_max{i}{key.cond_err_corr} = temp_Max;
-                C_min{i}{key.cond_err_corr} = temp_Min;
-                C_max{i}{key.cond_err_eos} = temp_Max;
-                C_min{i}{key.cond_err_eos} = temp_Min;
-                C_max{i}{key.cond_err_assembled} = temp_Max;
-                C_min{i}{key.cond_err_assembled} = temp_Min;
-                C_max{i}{key.cond_err_secondorder} = temp_Max;
-                C_min{i}{key.cond_err_secondorder} = temp_Min;
+            temp_Max =  0.25;
+
+            for i = 1:nSpecies
+                [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                    condErrRel, temp_Min, temp_Max);
             end
 
-            % override limits for CO2
-            temp_Max = 0.5;
+            % override for CO2 (species 2)
             temp_Min = -0.5;
-            for i = 2
-                C_max{i}{key.cond_err_tot} = temp_Max;
-                C_min{i}{key.cond_err_tot} = temp_Min;
-                C_max{i}{key.cond_err_corr} = temp_Max;
-                C_min{i}{key.cond_err_corr} = temp_Min;
-                C_max{i}{key.cond_err_eos} = temp_Max;
-                C_min{i}{key.cond_err_eos} = temp_Min;
-                C_max{i}{key.cond_err_assembled} = temp_Max;
-                C_min{i}{key.cond_err_assembled} = temp_Min;
-                C_max{i}{key.cond_err_secondorder} = temp_Max;
-                C_min{i}{key.cond_err_secondorder} = temp_Min;
-            end
+            temp_Max =  0.5;
+            i = 2;
+            [C_max{i}, C_min{i}] = self.setGroupLimits(C_max{i}, C_min{i}, ...
+                                                condErrRel, temp_Min, temp_Max);
 
-
-            % STANDARDIZE COLOR LIMITS FOR DENSITY FLOOR
-            for i = 1:3
+            % DENSITY FLOOR LIMITS
+            for i = 1:nSpecies
                 C_max{i}{key.visc_density_FLOOR} = -150;
                 C_min{i}{key.visc_density_FLOOR} = -1300;
                 C_max{i}{key.visc_density_floor} = 0;
                 C_min{i}{key.visc_density_floor} = -50;
+
                 C_max{i}{key.cond_density_FLOOR} = -0.1;
                 C_min{i}{key.cond_density_FLOOR} = -1000;
                 C_max{i}{key.cond_density_floor} = -1;
                 C_min{i}{key.cond_density_floor} = -50;
             end
 
+            % species-specific overrides for cond_density_FLOOR
             C_min{1}{key.cond_density_FLOOR} = -700;
             C_max{1}{key.cond_density_FLOOR} = -100;
             C_min{2}{key.cond_density_FLOOR} = -900;
@@ -562,108 +517,26 @@ classdef NRELplots
             C_min{3}{key.cond_density_FLOOR} = -800;
             C_max{3}{key.cond_density_FLOOR} = -300;
 
-            % STORE SOME RESULTS (needs to be last)
-            self.data.C_max = C_max;
-            self.data.C_min = C_min;
-            self.data.C_unit = '%';
-            self.data.C_label = 'Relative Error';
-
         end
 
-        function F = compute_properties(self,D_pele,D_cool,D_test)
-
-            key = self.key;
-
-            % store data
-            for spec = 1:3, 
-
-                % compute density properties
-                F{spec}{key.dens_gen} = D_pele{spec}{key.rho};
-                F{spec}{key.dens_ref} = D_cool{spec}{key.rho};
-                F{spec}{key.dens_ERR} = F{spec}{key.dens_gen} - F{spec}{key.dens_ref};
-                F{spec}{key.dens_err} = F{spec}{key.dens_ERR} ./ F{spec}{key.dens_ref};
-
-                % compute viscosity properties
-                F{spec}{key.visc_gen} = D_pele{spec}{key.mu};
-                F{spec}{key.visc_ref} = D_cool{spec}{key.mu};
-                F{spec}{key.visc_hyb} = D_test{spec}{key.mu};
-                F{spec}{key.visc_ERR_tot} = F{spec}{key.visc_gen} - F{spec}{key.visc_ref};
-                F{spec}{key.visc_err_tot} = F{spec}{key.visc_ERR_tot} ./ F{spec}{key.visc_ref};
-                F{spec}{key.visc_ERR_corr} = F{spec}{key.visc_hyb} - F{spec}{key.visc_ref};
-                F{spec}{key.visc_err_corr} = F{spec}{key.visc_ERR_corr} ./ F{spec}{key.visc_ref};
-                F{spec}{key.visc_dmudrho} = D_test{spec}{key.dmu};
-                F{spec}{key.visc_mismatch} = F{spec}{key.visc_hyb} ./ F{spec}{key.visc_ref};
-                F{spec}{key.visc_ERR_eos} = F{spec}{key.dens_ERR} .* F{spec}{key.visc_dmudrho};
-                F{spec}{key.visc_err_eos} = F{spec}{key.dens_err} .* F{spec}{key.visc_mismatch} .* F{spec}{key.dens_ref} .* F{spec}{key.visc_dmudrho} ./ F{spec}{key.visc_hyb};
-                F{spec}{key.visc_ERR_assembled} = F{spec}{key.visc_ERR_corr} + F{spec}{key.visc_ERR_eos};
-                F{spec}{key.visc_err_assembled} = F{spec}{key.visc_err_corr} + F{spec}{key.visc_err_eos};
-                F{spec}{key.visc_ERR_secondorder} = (F{spec}{key.visc_gen} - F{spec}{key.visc_hyb}) - F{spec}{key.visc_ERR_eos};
-                F{spec}{key.visc_err_secondorder} = (F{spec}{key.visc_gen} - F{spec}{key.visc_hyb}) ./ F{spec}{key.visc_ref} - F{spec}{key.visc_err_eos};
-                F{spec}{key.visc_density_FLOOR} = -F{spec}{key.visc_ref} ./ D_pele{spec}{key.dmu};
-                F{spec}{key.visc_density_floor} = F{spec}{key.visc_density_FLOOR} ./ F{spec}{key.dens_ref};
-                F{spec}{key.visc_kinematic_ratio} = (F{spec}{key.visc_ref} ./ F{spec}{key.visc_gen}) ./ (F{spec}{key.dens_ref} ./ F{spec}{key.dens_gen});
-
-                % cheater values (for reference if you need)
-                %F{spec}{visc_err_eos} = F{spec}{visc_ERR_eos} ./ F{spec}{visc_ref};
-                %F{spec}{visc_err_assembled} = F{spec}{visc_ERR_assembled} ./ F{spec}{visc_ref};
-                %F{spec}{visc_ERR_secondorder} = F{spec}{visc_ERR_tot} - F{spec}{visc_ERR_assembled};
-                %F{spec}{visc_err_secondorder} = F{spec}{visc_err_tot} - F{spec}{visc_err_assembled};
-
-                % compute conductivity properties
-                F{spec}{key.cond_gen} = D_pele{spec}{key.lam};
-                F{spec}{key.cond_ref} = D_cool{spec}{key.lam};
-                F{spec}{key.cond_hyb} = D_test{spec}{key.lam};
-                F{spec}{key.cond_ERR_tot} = F{spec}{key.cond_gen} - F{spec}{key.cond_ref};
-                F{spec}{key.cond_err_tot} = F{spec}{key.cond_ERR_tot} ./ F{spec}{key.cond_ref};
-                F{spec}{key.cond_ERR_corr} = F{spec}{key.cond_hyb} - F{spec}{key.cond_ref};
-                F{spec}{key.cond_err_corr} = F{spec}{key.cond_ERR_corr} ./ F{spec}{key.cond_ref};
-                F{spec}{key.cond_dlamdrho} = D_test{spec}{key.dlam};
-                F{spec}{key.cond_mismatch} = F{spec}{key.cond_hyb} ./ F{spec}{key.cond_ref};
-                F{spec}{key.cond_ERR_eos} = F{spec}{key.dens_ERR} .* F{spec}{key.cond_dlamdrho};
-                F{spec}{key.cond_err_eos} = F{spec}{key.dens_err} .* F{spec}{key.cond_mismatch} .* F{spec}{key.dens_ref} .* F{spec}{key.cond_dlamdrho} ./ F{spec}{key.cond_hyb};
-                F{spec}{key.cond_ERR_assembled} = F{spec}{key.cond_ERR_corr} + F{spec}{key.cond_ERR_eos};
-                F{spec}{key.cond_err_assembled} = F{spec}{key.cond_err_corr} + F{spec}{key.cond_err_eos};
-                F{spec}{key.cond_ERR_secondorder} = (F{spec}{key.cond_gen} - F{spec}{key.cond_hyb}) - F{spec}{key.cond_ERR_eos};
-                F{spec}{key.cond_err_secondorder} = (F{spec}{key.cond_gen} - F{spec}{key.cond_hyb}) ./ F{spec}{key.cond_ref} - F{spec}{key.cond_err_eos};
-                F{spec}{key.cond_density_FLOOR} = -F{spec}{key.cond_ref} ./ D_pele{spec}{key.dlam};
-                F{spec}{key.cond_density_floor} = F{spec}{key.cond_density_FLOOR} ./ F{spec}{key.dens_ref};
-
-                % convert absolute conductivity errors to mW/m_K
-                F{spec}{key.cond_ERR_tot} = 1000 * F{spec}{key.cond_ERR_tot};
-                F{spec}{key.cond_ERR_corr} = 1000 * F{spec}{key.cond_ERR_corr};
-                F{spec}{key.cond_ERR_eos} = 1000 * F{spec}{key.cond_ERR_eos};
-                F{spec}{key.cond_ERR_assembled} = 1000 * F{spec}{key.cond_ERR_assembled};
-                F{spec}{key.cond_ERR_secondorder} = 1000 * F{spec}{key.cond_ERR_secondorder};   
-
-                % set density floor to logarithmic values
-                %{
-                F{spec}{key.visc_density_FLOOR} = log10(-F{spec}{key.visc_density_FLOOR});
-                F{spec}{key.visc_density_floor} = log10(-F{spec}{key.visc_density_floor});
-                F{spec}{key.cond_density_FLOOR} = log10(-F{spec}{key.cond_density_FLOOR});
-                F{spec}{key.cond_density_floor} = log10(-F{spec}{key.cond_density_floor});
-                %}
-
-                %{
-                % NOTE: this isn't a very interesting plot. So I am muting this modification.
-                % compute keyout for viscosity density floor (i.e. values where the
-                %   required density floor would make the computed density
-                %   negative)
-                keyout = F{spec}{key.dens_ref} + F{spec}{key.visc_density_FLOOR};
-                keyout(keyout < 0) = NaN;
-                F{spec}{key.visc_density_FLOOR}(isnan(keyout)) = NaN;
-                F{spec}{key.visc_density_floor}(isnan(keyout)) = NaN;
-                
-                % compute keyout for conductivity density floor
-                keyout = F{spec}{key.dens_ref} + F{spec}{key.cond_density_FLOOR};
-                keyout(keyout < 0) = NaN;
-                F{spec}{key.cond_density_FLOOR}(isnan(keyout)) = NaN;
-                F{spec}{key.cond_density_floor}(isnan(keyout)) = NaN;
-                %}
-
-
-                end
+        function [minVal, maxVal] = makeSymmetric(self, minVal, maxVal)
+        % Force symmetric limits around 0 using the larger magnitude.
+            if abs(minVal) > abs(maxVal)
+                maxVal = abs(minVal);
+            else
+                minVal = -abs(maxVal);
+            end
         end
 
+        function [CmaxRow, CminRow] = setGroupLimits(self, CmaxRow, CminRow, idxGroup, minVal, maxVal)
+        % Set the same min/max for a group of field indices.
+            for idx = idxGroup
+                CmaxRow{idx} = maxVal;
+                CminRow{idx} = minVal;
+            end
+        end
+
+ 
 
         % PLOTTERS 
         function plot_density(self,spec2plot)
@@ -826,7 +699,7 @@ classdef NRELplots
                 % store data
                 T_val = data.T{spec};
                 P_val = data.P{spec};
-                D_val = data.F{spec}{prop};
+                D_val = self.F{spec}{prop};
 
                 % plot data
                 h = pcolor(T_val,P_val,D_val);
@@ -841,17 +714,6 @@ classdef NRELplots
                 self.format_axis(g,spec,prop);
                 self.format_plot(h,spec,prop);
                 self.format_colorbar(c,spec,prop);
-
-                %{
-                % temporary
-                % make color scale logarithmic (for the density floor plots)
-                %set(gca,'ColorScale','log');
-                h.CData = -log10(-h.CData) / log10(2); % convert to log2 scale
-                g.CLim = [-6,2];
-                c.Ticks = -6:1:2;
-                c.TickLabels = {'-64', '-32', '-16', '-8', '-4', '-2', '-1', '-0.5', '-0.25'};
-                c.TickLabelInterpreter = 'tex';
-                %}
 
                 % plot Widom line
                 key = self.key;
@@ -915,10 +777,11 @@ classdef NRELplots
                             'LabelSpacing',1000);
                 end
                 hold off;
+
                 % save and close figure
                 pause();
                 if self.opts.save_images
-                    dir = 'results/images/original_domain';
+                    dir = 'images/';
                     saveas(f, sprintf('%s/%s_2d_%s.png', dir, upper(data.species{spec}), self.F_filename{prop}), 'png');
                 end
 
@@ -934,7 +797,7 @@ classdef NRELplots
                 % store data
                 T_val = data.T{spec};
                 P_val = data.P{spec};
-                D_val = data.F{spec}{prop};
+                D_val = self.F{spec}{prop};
 
                 % plot data
                 h = pcolor(T_val,P_val,D_val);
@@ -976,36 +839,78 @@ classdef NRELplots
                 %[C,hh] = contour(T_val,P_val,D_val,self.F_contourLines{prop}{spec},...
                 
                 % contours for cond_ref
-                %[C,hh] = contour(T_val,P_val,D_val,[0.05,0.06,0.08,0.1],...
+                if prop == self.key.cond_ref
+                    [C,hh] = contour(T_val,P_val,D_val,[0.05,0.06,0.08,0.1],...
+                                'k-', ...
+                                'LineWidth',1.5, ...
+                                'ShowText',~self.C_manual_levels{prop}, ...
+                                'EdgeAlpha',0.2);
+                    if self.C_manual_levels{prop} == true
+                        clabel(C, hh, 'manual', ...
+                                'FontSize',24, ...
+                                'Color','k', ...
+                                'LabelSpacing',1000);
+                    else
+                        clabel(C, hh, ...
+                                'FontSize',24, ...
+                                'Color','k', ...
+                                'LabelSpacing',1000);
+                    end
+                    hold off;
+                end
+
                 
                 % conttours for cond_gen
-                %[C,hh] = contour(T_val,P_val,D_val,[0.035,0.04,0.05,0.06,0.065],...
-                % contours for cond_err
-                [C,hh] = contour(T_val,P_val,D_val,[-.1,-.2,-.3,-.4,-.5,-.6],...
-                            'k-', ...
-                            'LineWidth',1.5, ...
-                            'ShowText',~self.C_manual_levels{prop}, ...
-                            'EdgeAlpha',0.2);
-                if self.C_manual_levels{prop} == true
-                    clabel(C, hh, 'manual', ...
-                            'FontSize',24, ...
-                            'Color','k', ...
-                            'LabelSpacing',1000);
-                else
-                    clabel(C, hh, ...
-                            'FontSize',24, ...
-                            'Color','k', ...
-                            'LabelSpacing',1000);
+                if prop == self.key.cond_gen
+                    %[C,hh] = contour(T_val,P_val,D_val,[0.05,0.06,0.08,0.1],...
+                    [C,hh] = contour(T_val,P_val,D_val,[0.035,0.04,0.05,0.06,0.065],...
+                                'k-', ...
+                                'LineWidth',1.5, ...
+                                'ShowText',~self.C_manual_levels{prop}, ...
+                                'EdgeAlpha',0.2);
+                    if self.C_manual_levels{prop} == true
+                        clabel(C, hh, 'manual', ...
+                                'FontSize',24, ...
+                                'Color','k', ...
+                                'LabelSpacing',1000);
+                    else
+                        clabel(C, hh, ...
+                                'FontSize',24, ...
+                                'Color','k', ...
+                                'LabelSpacing',1000);
+                    end
+                    hold off;
                 end
-                hold off;
+
+               %[C,hh] = contour(T_val,P_val,D_val,[0.035,0.04,0.05,0.06,0.065],...
+
+                % contours for cond_err
+                if prop == key.cond_err_tot
+                    [C,hh] = contour(T_val,P_val,D_val,[-.1,-.2,-.3,-.4,-.5,-.6],...
+                                'k-', ...
+                                'LineWidth',1.5, ...
+                                'ShowText',~self.C_manual_levels{prop}, ...
+                                'EdgeAlpha',0.2);
+                    if self.C_manual_levels{prop} == true
+                        clabel(C, hh, 'manual', ...
+                                'FontSize',24, ...
+                                'Color','k', ...
+                                'LabelSpacing',1000);
+                    else
+                        clabel(C, hh, ...
+                                'FontSize',24, ...
+                                'Color','k', ...
+                                'LabelSpacing',1000);
+                    end
+                    hold off;
+                end
 
                 % save and close figure
                 pause();
                 if self.opts.save_images
-                    dir = 'results/images/original_domain';
+                    dir = 'images/';
                     saveas(f, sprintf('%s/%s_2d_%s.png', dir, upper(data.species{spec}), self.F_filename{prop}), 'png');
                 end
-                %}
 
             end, end
         end
@@ -1017,16 +922,19 @@ classdef NRELplots
 
             % format color scheme
             ax.Colormap = colormap_creator(self.C_scheme{prop});
-            ax.CLim = [self.data.C_min{spec}{prop}, self.data.C_max{spec}{prop}];
+            %ax.CLim = [self.data.C_min{spec}{prop}, self.data.C_max{spec}{prop}];
+            ax.CLim = [self.C_min{spec}{prop}, self.C_max{spec}{prop}];
 
             % format font
             ax.FontName = 'Roboto';
             ax.FontSize = 32;
 
             % format title
+            if self.opts.titles_on
             ax.TitleFontSizeMultiplier = 1.3;
             ax.Title.String = sprintf('%s, $%s$', self.data.species_str{spec}, self.F_name{prop});
             ax.Title.Interpreter = 'latex';
+            end
 
             % format x and y axes
             ax.LineWidth = 5;
@@ -1039,6 +947,19 @@ classdef NRELplots
             ax.YTickLabel = [1:1:3];
             ax.YLabel.String = '$P^*$';
             ax.YLabel.Interpreter = 'latex';
+
+            % KLUDGE: CO2's critical point was mistakenly recorded as 73.8080
+            %   atm instead of the correct 72.8080 atm. The critical point has
+            %   been corrected in this NRELplots object. But the data for CO2
+            %   were generated with this incorrect value, so we have to adjust
+            %   the tick marks here to match the data. If ever the data are
+            %   regenerated, they will be generated with the correct critical
+            %   pressure, and this kludge should be removed. Also, note that the
+            %   data for the "zoomed in" plots were generated with the correct
+            %   critical pressure, so this kludge is not applied in those plots.
+            if spec == self.key.co2 && self.opts.zoom == 0
+                ax.YTick = round((self.data.P_crit(spec) + 1) * [1:1:3],3);
+            end
 
         end
 
@@ -1080,7 +1001,7 @@ classdef NRELplots
 
             % store values
             for i = 1:length(prop), for j = 1:length(spec),
-                val(i,j) = max(max(self.data.F{spec(j)}{prop(i)}));
+                val(i,j) = max(max(self.F{spec(j)}{prop(i)}));
             end, end
         end
 
@@ -1094,7 +1015,7 @@ classdef NRELplots
 
             % store values
             for i = 1:length(prop), for j = 1:length(spec),
-                val(i,j) = min(min(self.data.F{spec(j)}{prop(i)}));
+                val(i,j) = min(min(self.F{spec(j)}{prop(i)}));
             end, end
         end
 
@@ -1111,7 +1032,7 @@ classdef NRELplots
             for i = 1:length(prop), for j = 1:length(spec),
 
                 % exclude critical region
-                temp = self.data.F{spec(j)}{prop(i)};
+                temp = self.F{spec(j)}{prop(i)};
                 temp = self.excludeCritical(temp,r);
                 val(i,j) = max(max(temp));
             end, end
@@ -1129,7 +1050,7 @@ classdef NRELplots
             % store values
             for i = 1:length(prop), for j = 1:length(spec),
                 % exclude critical region
-                temp = self.data.F{spec(j)}{prop(i)};
+                temp = self.F{spec(j)}{prop(i)};
                 temp = self.excludeCritical(temp,r);
                 val(i,j) = min(min(temp));
             end, end
@@ -1168,8 +1089,8 @@ classdef NRELplots
             for i = 1:length(prop), for j = 1:length(spec),
 
                 % store main values
-                [min_val, min_idx] = min(min(self.data.F{spec(j)}{prop(i)}));
-                [row, col] = find(self.data.F{spec(j)}{prop(i)} == min_val);
+                [min_val, min_idx] = min(min(self.F{spec(j)}{prop(i)}));
+                [row, col] = find(self.F{spec(j)}{prop(i)} == min_val);
                 T_val = self.data.T{spec(j)}(col(1));
                 P_val = self.data.P{spec(j)}(row(1));
                 val(1:2,j) = [T_val; P_val];
@@ -1199,8 +1120,8 @@ classdef NRELplots
             for i = 1:length(prop), for j = 1:length(spec),
 
                 % store main values
-                [min_val, min_idx] = max(max(self.data.F{spec(j)}{prop(i)}));
-                [row, col] = find(self.data.F{spec(j)}{prop(i)} == min_val);
+                [min_val, min_idx] = max(max(self.F{spec(j)}{prop(i)}));
+                [row, col] = find(self.F{spec(j)}{prop(i)} == min_val);
                 T_val = self.data.T{spec(j)}(col(1));
                 P_val = self.data.P{spec(j)}(row(1));
                 val(1:2,j) = [T_val; P_val];
@@ -1222,6 +1143,75 @@ classdef NRELplots
 
 
         % GETTERS
+        function self = compute_F(self)
+
+            D_pele = self.data.D_pele;
+            D_cool = self.data.D_cool;
+            D_test = self.data.D_test;
+            key = self.key;
+
+            % store data
+            for spec = 1:3, 
+
+                % compute density properties
+                F{spec}{key.dens_gen} = D_pele{spec}{key.rho};
+                F{spec}{key.dens_ref} = D_cool{spec}{key.rho};
+                F{spec}{key.dens_ERR} = F{spec}{key.dens_gen} - F{spec}{key.dens_ref};
+                F{spec}{key.dens_err} = F{spec}{key.dens_ERR} ./ F{spec}{key.dens_ref};
+
+                % compute viscosity properties
+                F{spec}{key.visc_gen} = D_pele{spec}{key.mu};
+                F{spec}{key.visc_ref} = D_cool{spec}{key.mu};
+                F{spec}{key.visc_hyb} = D_test{spec}{key.mu};
+                F{spec}{key.visc_ERR_tot} = F{spec}{key.visc_gen} - F{spec}{key.visc_ref};
+                F{spec}{key.visc_err_tot} = F{spec}{key.visc_ERR_tot} ./ F{spec}{key.visc_ref};
+                F{spec}{key.visc_ERR_corr} = F{spec}{key.visc_hyb} - F{spec}{key.visc_ref};
+                F{spec}{key.visc_err_corr} = F{spec}{key.visc_ERR_corr} ./ F{spec}{key.visc_ref};
+                F{spec}{key.visc_dmudrho} = D_test{spec}{key.dmu};
+                F{spec}{key.visc_mismatch} = F{spec}{key.visc_hyb} ./ F{spec}{key.visc_ref};
+                F{spec}{key.visc_ERR_eos} = F{spec}{key.dens_ERR} .* F{spec}{key.visc_dmudrho};
+                F{spec}{key.visc_err_eos} = F{spec}{key.dens_err} .* F{spec}{key.visc_mismatch} .* F{spec}{key.dens_ref} .* F{spec}{key.visc_dmudrho} ./ F{spec}{key.visc_hyb};
+                F{spec}{key.visc_ERR_assembled} = F{spec}{key.visc_ERR_corr} + F{spec}{key.visc_ERR_eos};
+                F{spec}{key.visc_err_assembled} = F{spec}{key.visc_err_corr} + F{spec}{key.visc_err_eos};
+                F{spec}{key.visc_ERR_secondorder} = (F{spec}{key.visc_gen} - F{spec}{key.visc_hyb}) - F{spec}{key.visc_ERR_eos};
+                F{spec}{key.visc_err_secondorder} = (F{spec}{key.visc_gen} - F{spec}{key.visc_hyb}) ./ F{spec}{key.visc_ref} - F{spec}{key.visc_err_eos};
+                F{spec}{key.visc_density_FLOOR} = -F{spec}{key.visc_ref} ./ D_pele{spec}{key.dmu};
+                F{spec}{key.visc_density_floor} = F{spec}{key.visc_density_FLOOR} ./ F{spec}{key.dens_ref};
+                F{spec}{key.visc_kinematic_ratio} = (F{spec}{key.visc_ref} ./ F{spec}{key.visc_gen}) ./ (F{spec}{key.dens_ref} ./ F{spec}{key.dens_gen});
+
+                % compute conductivity properties
+                F{spec}{key.cond_gen} = D_pele{spec}{key.lam};
+                F{spec}{key.cond_ref} = D_cool{spec}{key.lam};
+                F{spec}{key.cond_hyb} = D_test{spec}{key.lam};
+                F{spec}{key.cond_ERR_tot} = F{spec}{key.cond_gen} - F{spec}{key.cond_ref};
+                F{spec}{key.cond_err_tot} = F{spec}{key.cond_ERR_tot} ./ F{spec}{key.cond_ref};
+                F{spec}{key.cond_ERR_corr} = F{spec}{key.cond_hyb} - F{spec}{key.cond_ref};
+                F{spec}{key.cond_err_corr} = F{spec}{key.cond_ERR_corr} ./ F{spec}{key.cond_ref};
+                F{spec}{key.cond_dlamdrho} = D_test{spec}{key.dlam};
+                F{spec}{key.cond_mismatch} = F{spec}{key.cond_hyb} ./ F{spec}{key.cond_ref};
+                F{spec}{key.cond_ERR_eos} = F{spec}{key.dens_ERR} .* F{spec}{key.cond_dlamdrho};
+                F{spec}{key.cond_err_eos} = F{spec}{key.dens_err} .* F{spec}{key.cond_mismatch} .* F{spec}{key.dens_ref} .* F{spec}{key.cond_dlamdrho} ./ F{spec}{key.cond_hyb};
+                F{spec}{key.cond_ERR_assembled} = F{spec}{key.cond_ERR_corr} + F{spec}{key.cond_ERR_eos};
+                F{spec}{key.cond_err_assembled} = F{spec}{key.cond_err_corr} + F{spec}{key.cond_err_eos};
+                F{spec}{key.cond_ERR_secondorder} = (F{spec}{key.cond_gen} - F{spec}{key.cond_hyb}) - F{spec}{key.cond_ERR_eos};
+                F{spec}{key.cond_err_secondorder} = (F{spec}{key.cond_gen} - F{spec}{key.cond_hyb}) ./ F{spec}{key.cond_ref} - F{spec}{key.cond_err_eos};
+                F{spec}{key.cond_density_FLOOR} = -F{spec}{key.cond_ref} ./ D_pele{spec}{key.dlam};
+                F{spec}{key.cond_density_floor} = F{spec}{key.cond_density_FLOOR} ./ F{spec}{key.dens_ref};
+
+                % convert absolute conductivity errors to mW/m_K
+                F{spec}{key.cond_ERR_tot} = 1000 * F{spec}{key.cond_ERR_tot};
+                F{spec}{key.cond_ERR_corr} = 1000 * F{spec}{key.cond_ERR_corr};
+                F{spec}{key.cond_ERR_eos} = 1000 * F{spec}{key.cond_ERR_eos};
+                F{spec}{key.cond_ERR_assembled} = 1000 * F{spec}{key.cond_ERR_assembled};
+                F{spec}{key.cond_ERR_secondorder} = 1000 * F{spec}{key.cond_ERR_secondorder};   
+
+            end
+            
+            % store result
+            self.F = F;
+
+        end
+
         function key = get.key(self)
 
             % species
@@ -1271,7 +1261,7 @@ classdef NRELplots
             key.visc_err_secondorder = i;   i = i + 1;
             key.visc_density_FLOOR = i;     i = i + 1;
             key.visc_density_floor = i;     i = i + 1;
-            key.visc_kinematic_ratio = i;         i = i + 1;
+            key.visc_kinematic_ratio = i;   i = i + 1;
 
             % conductivity property key
             key.cond_gen = i;               i = i + 1;
@@ -1888,5 +1878,3 @@ classdef NRELplots
 
     end
 end
-
-
